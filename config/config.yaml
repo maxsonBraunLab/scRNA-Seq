@@ -1,0 +1,62 @@
+# 0 general info ----------------------------------------------------------------------------------
+
+title: Title of my project
+
+authors:
+  - first_author
+  - second_author
+  - pi_1
+  - pi_2
+
+# number of cores to utilize per node.
+# never set more cores than allowed per node (usually 24 but check the hardware specs).
+cores: 8
+
+assembly: "hg38" # mm10
+
+# 1 preprocessing ---------------------------------------------------------------------------------
+
+# list the names of your samples to process.
+samples2process:
+  - W1
+  - W2
+  - W3
+  - W4
+  - M1
+  - M2
+  - M3
+  - M4
+
+# give the analysis a name.
+project_name: "my_project"
+
+# save or don't save seurat object with cell cycle regression
+# cell_cycle_regression: TRUE # [TRUE, FALSE]
+
+# See QC metrics at these percentiles.
+metadataQuants:
+  - 0.5
+  - 0.75
+  - 0.95
+
+# filtering criteria
+percentMitoFilt: 15
+nCountMinFilt: 2000
+nCountMaxFilt: 20000
+
+# principle components to CALCULATE for each sample.
+nPCs: 150
+
+# principle components to UTILIZE for each sample.
+usePCs: 20
+
+# visualize cell cycle states versus expression level of these cell cycle genes.
+cc_genes:
+  - NASP
+  - USP1
+  - TUBB4B
+  - HMGB2
+  - PCNA
+  - TOP2A
+  - MCM6
+  - MKI67
