@@ -8,7 +8,7 @@ authors:
   - pi_1
   - pi_2
 
-# number of cores to utilize per node.
+# number of cores to utilize per node: <INTEGER>
 # never set more cores than allowed per node (usually 24 but check the hardware specs).
 cores: 8
 
@@ -16,7 +16,7 @@ assembly: "hg38" # mm10
 
 # 1 preprocessing ---------------------------------------------------------------------------------
 
-# list the names of your samples to process.
+# list the names of your samples to process: <STRING_LIST>
 samples2process:
   - W1
   - W2
@@ -27,30 +27,34 @@ samples2process:
   - M3
   - M4
 
-# give the analysis a name.
+# how are mitochondrial genes prefixed in your genome? <STRING>
+# human index uses "^MT-" while mouse index uses "^mt-"
+mito: "^mt-"
+
+# give the analysis a name: <STRING>
 project_name: "my_project"
 
-# save or don't save seurat object with cell cycle regression
-# cell_cycle_regression: TRUE # [TRUE, FALSE]
+# save or don't save seurat object with cell cycle regression: [TRUE, FALSE]
+# cell_cycle_regression: TRUE
 
-# See QC metrics at these percentiles.
+# See QC metrics at these percentiles: <FLOAT_LIST>
 metadataQuants:
   - 0.5
   - 0.75
   - 0.95
 
-# filtering criteria
+# filtering criteria: <INTEGER>
 percentMitoFilt: 15
 nCountMinFilt: 2000
 nCountMaxFilt: 20000
 
-# principle components to CALCULATE for each sample.
+# principle components to CALCULATE for each sample: <INTEGER>
 nPCs: 150
 
-# principle components to UTILIZE for each sample.
+# principle components to UTILIZE for each sample: <INTEGER>
 usePCs: 20
 
-# visualize cell cycle states versus expression level of these cell cycle genes.
+# visualize cell cycle states versus expression level of these cell cycle genes <STRING_LIST>
 cc_genes:
   - NASP
   - USP1

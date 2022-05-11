@@ -33,13 +33,13 @@ rule all:
 	input:
 		# 1 - preprocess
 		"data/reports/1-preprocess.html",
-		"data/rda/preprocess.{project_name}.{date}.rds".format(project_name = p),
+		"data/rda/preprocess.{project_name}.rds".format(project_name = p),
 		# 2 - integrate
 		# "data/reports/2-integrate.html",
-		# "data/rda/integrate.{project_name}.{date}.rds".format(project_name = p),
+		# "data/rda/integrate.{project_name}.rds".format(project_name = p),
 		# 3 - cluster
 		# "data/reports/3-cluster.html",
-		# "data/rda/cluster.{project_name}.{date}.rds".format(project_name = p),
+		# "data/rda/cluster.{project_name}.rds".format(project_name = p),
 		# 4 - differential
 		# "data/reports/4-differential.html"
 
