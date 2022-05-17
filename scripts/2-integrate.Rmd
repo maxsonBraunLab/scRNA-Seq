@@ -1,0 +1,160 @@
+---
+date: "`r Sys.Date()`"
+params:
+  input_rds:
+    value: x
+  output_rds:
+    value: x
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float:
+      collapsed: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+In order to integrate all CITE-Seq datasets together, the RNA (SCT normalized) and ADT (CLR normalized) from all samples will be [integrated separately](https://github.com/satijalab/seurat/issues/2706).
+These two objects will be [integrated together](https://github.com/satijalab/seurat/issues/3890#issuecomment-787598143) to produce one Seurat object that contains all samples and all their modalities.
+
+# Set-Up
+
+## Libraries 
+
+```{r setup_libs, include=TRUE}
+library(Seurat)
+library(yaml)
+library(future)
+library(dplyr)
+```
+
+# Variables
+
+## Update according to your dataset
+
+```{r setup_variables, include=TRUE}
+
+# read config file in yaml format
+if (!file.exists("config/config.yaml")) {
+  stop("config/config.yaml does not exist. Exiting the program")
+} else {
+  config_file <- read_yaml("config/config.yaml")
+}
+
+# Samples to process named by their treatment conditions
+samples2process <- config_file$samples2process
+
+# Set the baseline condition
+baseline <- config_file$baseline
+
+# Number of dimensions to calculate
+nPCs <- config_file$nPCs
+
+# Number of dimensions to use
+integratedPC <- config_file$integratedPC
+
+# how many neighbors (k) to use when picking anchors
+k.anchor <- config_file$`k.anchor`
+
+# List of antibodies in CITE-Seq assay
+ab_list <- config_file$antibody_list
+
+doc_title <- paste(config_file$title, "- integration")
+author_list <- paste(config_file$authors, collapse = ", ")
+```
+
+---
+title: "`r doc_title`"
+author: "`r author_list`"
+---
+
+## Inherent Variables
+
+```{r setup_inherent_variables, include=TRUE}
+
+# Load Seurat objects
+exptsList <- readRDS(params$input_rds)
+
+# Needed to avoid error in getGlobalsandPackges 
+options(future.globals.maxSize = 16 * 1024^3)
+```
+
+# Integration - Transcriptome
+
+```{r integrate, include=TRUE}
+
+# Collect non-redudant list of features across all samples
+rnaFeatures <- NULL
+
+for (sample in names(exptsList)) {
+  DefaultAssay(exptsList[[sample]]) <- 'SCT'
+  rnaFeatures <- unique(  c(rnaFeatures, rownames(exptsList[[sample]]))  )
+}
+
+# Select most variable features for integration
+intFeatures <- SelectIntegrationFeatures(object.list = exptsList,
+                                        nfeatures = length(rnaFeatures),
+                                        fvf.nfeatures = rnaFeatures, 
+                                        assay = rep( "SCT", length(samples2process)) )
+
+# Calculate Pearson Residuals
+preppedExptsList <- PrepSCTIntegration(object.list = exptsList,
+                              anchor.features = intFeatures,
+                              verbose = FALSE, 
+                              assay = rep( "SCT", length(samples2process)) )
+
+# Identify integration anchors
+ref <- which(names(exptsList) == baseline)
+intAnchors <- FindIntegrationAnchors(object.list = preppedExptsList,
+                                    normalization.method = "SCT",
+                                    k.anchor = k.anchor,
+                                    assay = rep("SCT", length(samples2process)),
+                                    reference = ref, 
+                                    dims = 1:nPCs,
+                                    anchor.features = intFeatures,
+                                    verbose = TRUE)
+
+# Integrate selected data
+integratedRNA <- IntegrateData(anchorset = intAnchors, 
+                              normalization.method = "SCT",
+                              dims = 1:nPCs,
+                              verbose = TRUE, 
+                              new.assay.name = "integrated")
+
+# Run PCA on the integrated object
+integratedRNA <- RunPCA(integratedRNA, npcs = integratedPC, verbose = FALSE)
+
+# Run UMAP on the integrated object
+integratedRNA <- RunUMAP(integratedRNA, dims = 1:integratedPC, verbose = FALSE, n.components = 3)
+
+# save integrated object to list of seurat objects
+exptsList[['integrated']] <- integratedRNA
+
+```
+
+## Scree Plot - Transcriptome {.tabset}
+
+```{r elbowPlots, results = 'asis'}
+for (i in names(exptsList)) {
+  cat(paste("###", toupper(i), "\n\n"))
+
+  cat("\n\n")
+  plot(ElbowPlot(exptsList[[i]], ndims = nPCs))
+  cat("\n\n")
+}
+```
+
+# Save Data
+```{r save_data, include=TRUE}
+print(sprintf("Saving preprocessed individual samples and the integrated object in %s", params$output_rds))
+saveRDS(exptsList, file = params$output_rds)
+```
+
+# Session Information
+```{r session_info, include=TRUE}
+sessionInfo()
+```
