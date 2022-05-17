@@ -1,0 +1,350 @@
+---
+date: "`r Sys.Date()`"
+params:
+  input_rds:
+    value: x
+  output_rds:
+    value: x
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    number_sections: true
+    toc_depth: 2
+    toc_float:
+      collapsed: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 8, fig.height = 6, cache.lazy = FALSE)
+```
+
+# Set-Up
+
+## Libraries
+
+```{r setup_libs}
+library(Seurat)
+library(data.table)
+library(ggplot2)
+library(knitr)
+library(networkD3)
+library(patchwork)
+library(dplyr)
+library(clustree)
+library(ggthemes)
+library(viridis)
+library(yaml)
+library(tibble)
+library(future)
+library(plotly)
+library(RColorBrewer)
+library(parallel)
+```
+
+## Variables
+
+## Update according to your dataset
+
+```{r setup_variables}
+
+# read config file in yaml format
+if (!file.exists("config/config.yaml")) {
+  stop("config/config.yaml does not exist. Exiting the program")
+} else {
+  config_file <- read_yaml("config/config.yaml")
+}
+
+doc_title <- paste(config_file$title, "- clustering")
+author_list <- paste(config_file$authors, collapse = ", ")
+
+# Clustering Resolution
+
+clusRes <- lapply(names(config_file$resolutions), function(x) {config_file$resolutions[[x]]}) # resolution values (floats)
+names(clusRes) <- names(config_file$resolutions) # map sample name to resolution
+
+# Number of dimensions to use for individual samples
+samplePC <- config_file$samplePC
+
+# Number of dimensions to use for integrated samples
+integratedPC <- config_file$integratedPC
+
+# check if resolutions > 2
+if (any(clusRes > 2)) {
+  stop("Cluster resolution is > 2")
+}
+
+ab_list <- config_file$antibody_list
+
+feature_plot_list <- config_file$FeaturePlotList
+```
+
+---
+title: "`r doc_title`"
+author: "`r author_list`"
+---
+
+## Inherent Variables
+
+```{r setup_inherent_variables}
+
+# Load Seurat objects
+exptsList <- readRDS(params$input_rds)
+
+# Create plot that explains variance by Principle Components (PCs) to find the dimensionality
+percentExplained <- function( seuratObject ){
+  return(cumsum(seuratObject@reductions$pca@stdev^2)/seuratObject@reductions$pca@misc$total.variance)
+}
+
+plotPercentExplained <- function( seuratObject , ndims = nDims) {
+  data.use <- percentExplained( seuratObject )
+  plot <- ggplot(data = data.frame(dims = 1:ndims, var = data.use[1:ndims])) +
+            geom_point(mapping = aes_string(x = 'dims', y = 'var')) + labs( y = "% variance explained", x = "PC") +
+            ggtitle(sprintf("Variance Explained by Principle Components in %s", sample)) +
+            theme_clean()
+  return(plot)
+}
+```
+
+# Clustree Clustering
+
+```{r clustree, results = 'hide', message = FALSE}
+
+# compute neighbors and perform clustree analyses per sample
+plotList <- list()
+
+for (sample in names(exptsList)) {
+  
+  print(paste("Clustree analysis for sample", sample))
+  myso <- exptsList[[sample]]
+  
+  if (sample == "integrated") {
+    prefix = "integrated_snn_res."
+    nDims = integratedPC
+  } else {
+    prefix = "SCT_snn_res."
+    nDims = samplePC
+  }
+
+  myso <- myso %>%
+    FindNeighbors(dims = 1:nDims) %>%
+    FindClusters(resolution = seq(0.1, 2, 0.1))
+
+  # Add UMAP embedding
+  embeddings <- Embeddings(object = myso, reduction = "umap")
+
+  myso@meta.data$UMAP_1 <- embeddings[,1]
+  myso@meta.data$UMAP_2 <- embeddings[,2]
+
+  # Clustree visualizations to determine best cluster resolution
+  plotList[[sample]][["clustree"]] <- clustree(myso, prefix = prefix)
+  
+  plotList[[sample]][["clustreeOverlay"]] <- clustree_overlay(x = myso@meta.data,
+                                                              prefix = prefix,
+                                                              x_value = "UMAP_1",
+                                                              y_value = "UMAP_2")
+
+  myso@meta.data$UMAP_1 = NULL
+  myso@meta.data$UMAP_2 = NULL
+
+  exptsList[[sample]] <- myso
+}
+
+print('1')
+```
+
+# UMAP Parameters per Sample {.tabset}
+
+```{r umap_params, results='asis'}
+for (i in names(exptsList)) {
+  cat(paste( "##", toupper(i), "\n\n" ))
+
+  cat("### Clustree Hierarchy\n")
+  plot(plotList[[i]][["clustree"]])
+  cat("\n\n---\n\n")
+ 
+  cat("### Clustree Overlay\n")
+  plot(plotList[[i]][["clustreeOverlay"]])
+  cat("\n\n---\n\n")
+}
+```
+
+# UMAP Clustering per Sample
+
+```{r umap}
+
+for (sample in names(exptsList)) {
+  
+  paste(sprintf("UMAP Clustering the %s object", sample))
+  
+  myso <- exptsList[[sample]]
+  
+  # Cluster the cells at the designated resolution in the config file.
+  myso <- myso %>% FindClusters(resolution = clusRes[[sample]], verbose = FALSE)
+  
+  # Plot and save UMAP clusters
+  Idents(myso) <- myso$seurat_clusters
+  plotList[[sample]][["umap"]] <- DimPlot(object = myso, reduction = 'umap', label = TRUE, label.size = 7, pt.size = 1) + ggtitle(toupper(sample))
+  
+  # Save clustering
+  exptsList[[sample]] <- myso
+}
+
+rm(myso)
+```
+
+# UMAP Plots {.tabset}
+```{r umap_plots, results='asis'}
+for (i in names(exptsList)) {
+  cat(paste( "##", toupper(i), "\n" ))
+
+  cat("\n")
+  plot(plotList[[i]][["umap"]])
+  cat("\n\n")
+}
+```
+
+# Custom Feature Plots {.tabset}
+```{r rnaFeaturePlot, results='asis'}
+
+# Fetch list of viable genes per each sample (subscriptable_genes).
+# Remove any genes from original list from subscriptable_genes.
+# Append to filtered list of genes, then unlist and unique.
+feature_plot_list_filtered <- list()
+for (sample in names(exptsList)) {
+  DefaultAssay(exptsList[[sample]]) <- "SCT"
+  subscriptable_genes <- colnames( FetchData(exptsList[[sample]], vars = c("ident", feature_plot_list)) )
+  subscriptable_genes <- try({feature_plot_list[feature_plot_list %in% subscriptable_genes]}, silent = TRUE)
+  feature_plot_list_filtered <- append(feature_plot_list_filtered, subscriptable_genes)
+}
+feature_plot_list_filtered <- unique(unlist(feature_plot_list_filtered))
+
+for (sample in names(exptsList)) {
+  cat(paste("##", toupper(sample), "{.tabset}", "\n\n"))
+  DefaultAssay(exptsList[[sample]]) <- "RNA"
+
+  for (gene in feature_plot_list_filtered) {
+    cat(paste("###", gene, "\n\n"))
+
+    cat("\n\n")
+    plot(FeaturePlot(exptsList[[sample]], gene, pt.size = 1, label = TRUE, label.size = 8))
+    cat("\n\n")
+  }
+}
+print('2')
+```
+
+# Cluster Proportions by Sample
+
+```{r clusterProp}
+exptsList[["integrated"]]@meta.data %>%
+  group_by(seurat_clusters, orig.ident) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = seurat_clusters, y = prop, fill = orig.ident)) +
+  geom_col() +
+  ggtitle("Cell proportions by cluster") +
+  ylab("Proportions") +
+  labs(fill = "Treatment") +
+  geom_text(aes(label = round(prop * 100, 1)), position = position_stack(vjust = 0.5), color = "white", size = 4)
+
+exptsList[["integrated"]]@meta.data %>% 
+    group_by(seurat_clusters,orig.ident) %>% 
+    summarise(n = n()) %>%
+    ungroup() %>%
+    group_by(orig.ident) %>%
+    mutate(prop = n / sum(n)) %>%
+    ggplot(aes(x = orig.ident, y = prop, fill = seurat_clusters)) +
+    geom_col() +
+    ggtitle("Cluster Proportions by Sample") + 
+    geom_text(aes(label = round(prop * 100, 1)), position = position_stack(vjust = 0.5), color = "white", size = 4)
+```
+
+# 3D UMAP Colored by Clusters
+
+```{r 3D_umaps}
+
+# define umap output directory
+if (!dir.exists("data/umaps")) {
+  dir.create("data/umaps")
+}
+
+for (sample in names(exptsList)) {
+
+  myso <- exptsList[[sample]]
+
+  cell_meta <- merge(myso@reductions$umap@cell.embeddings, myso@meta.data, by = 0, all = TRUE)
+  cell_meta <- cell_meta %>% column_to_rownames("Row.names")
+  col_scheme <- colorRampPalette(brewer.pal(8, config_file$rcolorbrewer_palette))(length(unique(cell_meta$seurat_clusters)))
+
+  p <- plot_ly(cell_meta,
+          x = ~UMAP_1,
+          y = ~UMAP_2,
+          z = ~UMAP_3,
+          size = 1,
+          color = ~seurat_clusters,
+          colors = col_scheme,
+          # hover text
+          text = ~paste("Cluster:", seurat_clusters, "<br>nCount_SCT:", nCount_SCT)) %>% 
+    add_markers() %>%
+    layout(title = paste(toupper(sample), "UMAP Clusters"),
+          xaxis = list(title = "UMAP_1"),
+          yaxis = list(title = "UMAP_2"))
+
+  # save and print where they are located.
+  out_file <- paste0("data/umaps/", toupper(sample), "_umap.html")
+  print(paste("Sample", sample, "UMAP file is located at:", out_file))
+  htmlwidgets::saveWidget(p, out_file) # Rmd does not output files.
+}
+
+rm(myso)
+```
+
+# 3D UMAP Colored by Identity
+
+```{r 3D_umaps2}
+
+if (!dir.exists("data/umaps")) {
+  dir.create("data/umaps")
+}
+
+myso <- exptsList[["integrated"]]
+
+cell_meta <- merge(myso@reductions$umap@cell.embeddings, myso@meta.data, by = 0, all = TRUE)
+cell_meta <- cell_meta %>% column_to_rownames("Row.names")
+col_scheme <- colorRampPalette(brewer.pal(8, config_file$rcolorbrewer_palette))(length(unique(cell_meta$seurat_clusters)))
+
+p <- plot_ly(cell_meta,
+        x = ~UMAP_1,
+        y = ~UMAP_2,
+        z = ~UMAP_3,
+        size =1,
+        color = ~orig.ident,
+        colors = col_scheme,
+        # hover text
+        text = ~paste("Cluster:", seurat_clusters, "<br>nCount_SCT:", nCount_SCT)) %>% 
+  add_markers() %>%
+  layout(title = "Integrated UMAP by Sample Identity",
+        xaxis = list(title = "UMAP_1"),
+        yaxis = list(title = "UMAP_2"))
+
+out_file <- "data/umaps/integrated_identity_umap.html"
+print(paste("Integrated UMAP colored by sample identity is here:", out_file))
+htmlwidgets::saveWidget(p, out_file)
+
+rm(cell_meta, col_scheme, p, myso, out_file)
+
+```
+
+# Save Data
+```{r save_data, include=TRUE}
+print(paste("Saving preprocessed individual samples and the integrated object in", params$output_rds))
+saveRDS(exptsList, file = params$output_rds)
+```
+
+# Session Information
+```{r session_info}
+sessionInfo()
+```
+
